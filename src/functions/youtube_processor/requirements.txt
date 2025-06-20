@@ -1,0 +1,6 @@
+google-cloud-storage==2.14.0
+yt-dlp==2025.06.09
+functions-framework==3.5.0
+structlog==24.1.0
+flask==3.0.0
+browser-cookie3==0.19.1 

@@ -1,0 +1,40 @@
+You are an expert in Python, Terraform, and Google Cloud Platform.
+
+### Comments
+
+- **Avoid dummy self-explanatory comments** - Don't write comments that just restate what the code obviously does
+- Write comments that explain the "why" not the "what"
+- Focus on business logic, complex algorithms, or non-obvious design decisions
+- Use docstrings for function documentation with clear parameter descriptions
+
+### Code Style
+
+- Follow PEP 8 for Python code
+- Use meaningful variable and function names
+- Keep functions small and focused on a single responsibility
+- Prefer explicit over implicit code
+
+### Infrastructure (Terraform)
+
+- Use descriptive resource names
+- Group related resources with consistent naming patterns
+- Add comments for complex configurations or business logic
+- Use variables for configurable values
+
+### Error Handling
+
+- Use structured logging with context
+- Handle errors gracefully with appropriate fallbacks
+- Log meaningful error messages with relevant context
+
+### Security
+
+- Never commit API keys or secrets to version control
+- Use environment variables and secret management
+- Validate all inputs and sanitize data
+
+### Testing
+
+- Write tests for critical business logic
+- Use descriptive test names that explain the scenario
+- Mock external dependencies in unit tests

@@ -1,0 +1,104 @@
+main:
+  params: [input]
+  steps:
+    - init:
+        assign:
+          - video_url: $${input.video_url}
+          - target_language: $${input.target_language}
+          - email: $${input.email}
+          - job_id: $${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
+          - start_time: $${sys.now()}
+
+    - extract_audio:
+        try:
+          call: http.post
+          args:
+            url: ${youtube_processor_url}
+            body:
+              video_url: $${video_url}
+              job_id: $${job_id}
+          result: audio_result
+        retry:
+          max_retries: 3
+          backoff:
+            initial_delay: 1
+            max_delay: 60
+            multiplier: 2
+
+    - transcribe:
+        try:
+          call: http.post
+          args:
+            url: ${transcription_processor_url}
+            body:
+              audio_path: $${audio_result.body.audio_path}
+              job_id: $${job_id}
+          result: transcription_result
+        retry:
+          max_retries: 3
+          backoff:
+            initial_delay: 1
+            max_delay: 60
+            multiplier: 2
+
+    - translate:
+        try:
+          call: http.post
+          args:
+            url: ${translation_processor_url}
+            body:
+              transcript_path: $${transcription_result.body.transcript_path}
+              target_language: $${target_language}
+              job_id: $${job_id}
+          result: translation_result
+        retry:
+          max_retries: 3
+          backoff:
+            initial_delay: 1
+            max_delay: 60
+            multiplier: 2
+
+    - create_cards:
+        try:
+          call: http.post
+          args:
+            url: ${cards_processor_url}
+            body:
+              translation_data: $${translation_result.body}
+              job_id: $${job_id}
+          result: cards_result
+        retry:
+          max_retries: 3
+          backoff:
+            initial_delay: 1
+            max_delay: 60
+            multiplier: 2
+
+    - notify:
+        try:
+          call: http.post
+          args:
+            url: ${notification_processor_url}
+            body:
+              email: $${email}
+              job_id: $${job_id}
+              stats:
+                cards_created: $${cards_result.body.cards_created}
+                new_words: $${translation_result.body.new_words}
+                processing_time: $${sys.now() - start_time}
+          result: notification_result
+        retry:
+          max_retries: 3
+          backoff:
+            initial_delay: 1
+            max_delay: 60
+            multiplier: 2
+
+    - return_result:
+        return:
+          job_id: $${job_id}
+          status: 'completed'
+          stats:
+            cards_created: $${cards_result.body.cards_created}
+            new_words: $${translation_result.body.new_words}
+            processing_time: $${sys.now() - start_time}

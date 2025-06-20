@@ -1,0 +1,17 @@
+# Development dependencies for the instantcards project
+
+# Include all function requirements
+-r src/functions/youtube_processor/requirements.txt
+-r src/functions/transcription_processor/requirements.txt
+-r src/functions/translation_processor/requirements.txt
+-r src/functions/cards_processor/requirements.txt
+-r src/functions/notification_processor/requirements.txt
+
+# Additional development-only dependencies
+pytest>=7.4.0
+pytest-mock>=3.11.0
+pytest-cov>=4.1.0
+black>=23.7.0
+flake8>=6.0.0
+isort>=5.12.0
+python-dotenv>=1.0.0 
