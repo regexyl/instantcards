@@ -6,13 +6,9 @@ import functions_framework
 from google.cloud import storage
 import structlog
 from flask import Request
-import time
 import random
 
-# Configure structured logging
 logger = structlog.get_logger()
-
-# Initialize clients
 storage_client = storage.Client()
 
 
@@ -37,7 +33,6 @@ def download_audio(video_url: str, job_id: str) -> str:
     """
     logger.info("downloading_audio", video_url=video_url, job_id=job_id)
 
-    # Create temp directory for download
     with tempfile.TemporaryDirectory() as temp_dir:
         output_template = os.path.join(temp_dir, f"{job_id}.%(ext)s")
 
@@ -77,75 +72,43 @@ def download_audio(video_url: str, job_id: str) -> str:
             },
         }
 
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                logger.info("download_attempt", attempt=attempt +
-                            1, max_retries=max_retries)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
 
-                # Download audio
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([video_url])
+            output_file = f"{job_id}.wav"
+            output_path = os.path.join(temp_dir, output_file)
 
-                # Get the output filename
-                output_file = f"{job_id}.wav"
-                output_path = os.path.join(temp_dir, output_file)
+            if not os.path.exists(output_path):
+                raise FileNotFoundError(
+                    f"Audio file not found at {output_path}")
 
-                if not os.path.exists(output_path):
-                    raise FileNotFoundError(
-                        f"Audio file not found at {output_path}")
+            # Upload to Cloud Storage
+            bucket = get_media_bucket()
+            blob_name = f"audio/{job_id}/audio.wav"
+            blob = bucket.blob(blob_name)
 
-                # Upload to Cloud Storage
-                bucket = get_media_bucket()
-                blob_name = f"audio/{job_id}/audio.wav"
-                blob = bucket.blob(blob_name)
+            blob.upload_from_filename(output_path)
+            logger.info(
+                "audio_uploaded",
+                blob_name=blob_name,
+                size_bytes=os.path.getsize(output_path),
+            )
 
-                blob.upload_from_filename(output_path)
-                logger.info(
-                    "audio_uploaded",
-                    blob_name=blob_name,
-                    size_bytes=os.path.getsize(output_path),
-                )
+            return blob_name
 
-                return blob_name
-
-            except yt_dlp.utils.DownloadError as e:
-                error_msg = str(e)
-                logger.warning(
-                    "download_attempt_failed",
-                    attempt=attempt + 1,
-                    error=error_msg,
-                    video_url=video_url,
-                    job_id=job_id,
-                )
-
-                # If it's a bot detection error and we have more retries
-                if "Sign in to confirm you're not a bot" in error_msg and attempt < max_retries - 1:
-                    # Rotate user agent for next attempt
-                    ydl_opts["user_agent"] = random.choice(user_agents)
-                    # Add delay before retry
-                    time.sleep(random.uniform(2, 5))
-                    continue
-                else:
-                    # Final attempt failed or other error
-                    raise
-
-            except Exception as e:
-                logger.error(
-                    "audio_download_failed",
-                    error=str(e),
-                    video_url=video_url,
-                    job_id=job_id,
-                )
-                raise
-
-        # If we get here, all retries failed
-        raise Exception(
-            f"Failed to download audio after {max_retries} attempts")
+        except Exception as e:
+            logger.error(
+                "audio_download_failed",
+                error=str(e),
+                video_url=video_url,
+                job_id=job_id,
+            )
+            raise
 
 
 @functions_framework.http
-def process_video(request: Request) -> Union[Dict[str, Any], Tuple[Dict[str, str], int]]:
+def process_video(request: Request) -> Tuple[Dict[str, str], int]:
     """
     Cloud Function entry point.
 
@@ -170,8 +133,7 @@ def process_video(request: Request) -> Union[Dict[str, Any], Tuple[Dict[str, str
 
     try:
         audio_path = download_audio(video_url, job_id)
-
-        return {"status": "success", "audio_path": audio_path, "job_id": job_id}
+        return {"status": "success", "audio_path": audio_path, "job_id": job_id}, 200
 
     except Exception as e:
         logger.exception(

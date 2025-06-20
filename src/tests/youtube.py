@@ -8,16 +8,13 @@ import os
 import json
 from flask import Flask, request
 
-# Add the src directory to the path to resolve modules
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), '..')))
 
 from functions.youtube_processor.main import process_video
 
-# Create a minimal Flask app for testing
 app = Flask(__name__)
-bucket_name = os.environ.get("MEDIA_BUCKET")
-print("Bucket name:", bucket_name)
+
 
 def test_youtube_processor():
     """Test the YouTube processor function."""
