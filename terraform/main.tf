@@ -67,6 +67,32 @@ resource "google_secret_manager_secret" "mochi_api_key" {
   }
 }
 
+resource "google_secret_manager_secret" "openai_api_key" {
+  secret_id = "openai-api-key"
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "openai_api_key" {
+  secret      = google_secret_manager_secret.openai_api_key.id
+  secret_data = var.openai_api_key
+}
+
+
+# Add DB URL secret
+resource "google_secret_manager_secret" "db_url" {
+  secret_id = "db-url"
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "db_url" {
+  secret      = google_secret_manager_secret.db_url.id
+  secret_data = var.db_url
+}
+
 # Replace SendGrid API key secret with Postmark
 resource "google_secret_manager_secret" "postmark_api_token" {
   secret_id = "postmark-api-token"
@@ -76,6 +102,21 @@ resource "google_secret_manager_secret" "postmark_api_token" {
 }
 
 # Cloud Functions
+module "job_manager" {
+  source = "./modules/cloud_function"
+  
+  name        = "job-manager"
+  description = "Manages job creation and status tracking in the database"
+  runtime     = "python310"
+  
+  source_dir  = "../src/functions/job_manager"
+  entry_point = "manage_job"
+  
+  secret_environment_variables = {
+    DB_URL = google_secret_manager_secret.db_url.secret_id
+  }
+}
+
 module "youtube_processor" {
   source = "./modules/cloud_function"
   
@@ -99,34 +140,19 @@ module "transcription_processor" {
   source = "./modules/cloud_function"
   
   name        = "transcription-processor"
-  description = "Transcribes audio using Speech-to-Text"
+  description = "Transcribes audio and translates content using OpenAI Whisper and Google Translate"
   runtime     = "python310"
   
   source_dir  = "../src/functions/transcription_processor"
-  entry_point = "process_transcription"
+  entry_point = "process_transcription_and_translation"
   
   environment_variables = {
     MEDIA_BUCKET = google_storage_bucket.media_bucket.name
-  }
-}
-
-module "translation_processor" {
-  source = "./modules/cloud_function"
-  
-  name        = "translation-processor"
-  description = "Translates and extracts vocabulary"
-  runtime     = "python310"
-  
-  source_dir  = "../src/functions/translation_processor"
-  entry_point = "process_translation"
-  
-  environment_variables = {
-    MEDIA_BUCKET = google_storage_bucket.media_bucket.name
-    ZEP_ENDPOINT = var.zep_api_endpoint
   }
   
   secret_environment_variables = {
-    ZEP_API_KEY = google_secret_manager_secret.zep_api_key.secret_id
+    OPENAI_API_KEY = google_secret_manager_secret.openai_api_key.secret_id
+    DB_URL = google_secret_manager_secret.db_url.secret_id
   }
 }
 
@@ -139,9 +165,11 @@ module "cards_processor" {
   
   source_dir  = "../src/functions/cards_processor"
   entry_point = "create_cards"
-  
+
   secret_environment_variables = {
+    ZEP_API_KEY = google_secret_manager_secret.zep_api_key.secret_id
     MOCHI_API_KEY = google_secret_manager_secret.mochi_api_key.secret_id
+    DB_URL = google_secret_manager_secret.db_url.secret_id
   }
 }
 
@@ -163,6 +191,7 @@ module "notification_processor" {
   
   secret_environment_variables = {
     POSTMARK_API_TOKEN = google_secret_manager_secret.postmark_api_token.secret_id
+    DB_URL = google_secret_manager_secret.db_url.secret_id
   }
 }
 
@@ -171,9 +200,9 @@ resource "google_workflows_workflow" "video_to_cards" {
   name            = "video-to-cards-workflow"
   region          = var.region
   source_contents = templatefile("${path.module}/workflow.yaml", {
+    job_manager_url              = module.job_manager.function_url
     youtube_processor_url        = module.youtube_processor.function_url
     transcription_processor_url  = module.transcription_processor.function_url
-    translation_processor_url    = module.translation_processor.function_url
     cards_processor_url          = module.cards_processor.function_url
     notification_processor_url   = module.notification_processor.function_url
   })
@@ -193,6 +222,11 @@ output "workflow_name" {
   value       = google_workflows_workflow.video_to_cards.name
 }
 
+output "job_manager_url" {
+  description = "URL of the job manager function"
+  value       = module.job_manager.function_url
+}
+
 output "youtube_processor_url" {
   description = "URL of the YouTube processor function"
   value       = module.youtube_processor.function_url
@@ -201,11 +235,6 @@ output "youtube_processor_url" {
 output "transcription_processor_url" {
   description = "URL of the transcription processor function"
   value       = module.transcription_processor.function_url
-}
-
-output "translation_processor_url" {
-  description = "URL of the translation processor function"
-  value       = module.translation_processor.function_url
 }
 
 output "cards_processor_url" {

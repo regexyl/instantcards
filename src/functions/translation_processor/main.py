@@ -7,13 +7,14 @@ from google.cloud import translate_v2
 import google.cloud.aiplatform as aiplatform
 from vertexai.language_models import TextGenerationModel
 import structlog
+import MeCab
 
-# Configure structured logging
 logger = structlog.get_logger()
-
-# Initialize clients
 storage_client = storage.Client()
 translate_client = translate_v2.Client()
+
+# Initialize MeCab tokenizer
+_tokenizer = MeCab.Tagger("-Ochasen")
 
 
 def get_media_bucket() -> storage.Bucket:
@@ -24,59 +25,85 @@ def get_media_bucket() -> storage.Bucket:
     return storage_client.bucket(bucket_name)
 
 
-def extract_vocabulary(text: str, target_language: str) -> List[Dict[str, Any]]:
+def extract_vocabulary(text: str) -> List[Dict[str, Any]]:
     """
-    Extract vocabulary words from text using AI.
+    Extract vocabulary words from text using Japanese tokenizer.
 
     Args:
         text: Text to analyze
-        target_language: Target language for translation
 
     Returns:
-        List of vocabulary words with translations
+        List of vocabulary words with metadata
     """
-    logger.info(
-        "extracting_vocabulary", text_length=len(text), target_language=target_language
-    )
+    logger.info("extracting_vocabulary", text_length=len(text))
 
-    # Use Vertex AI to extract vocabulary
-    aiplatform.init(project=os.environ.get("GOOGLE_CLOUD_PROJECT"))
-    model = TextGenerationModel.from_pretrained("text-bison@001")
+    # Tokenize the text
+    parsed = _tokenizer.parse(text)
 
-    prompt = f"""
-    Extract vocabulary words from this {target_language} text that would be useful for language learning.
-    Focus on words that are:
-    1. Common and frequently used
-    2. Appropriate for intermediate learners
-    3. Not too basic (like "the", "is", "and")
-    
-    Text: {text[:1000]}  # Limit to first 1000 chars for analysis
-    
-    Return a JSON array of objects with:
-    - word: the vocabulary word
-    - reading: pronunciation/reading (if applicable)
-    - translation: English translation
-    - part_of_speech: noun, verb, adjective, etc.
-    - jlpt_level: estimated JLPT level (N5-N1)
-    - example_jp: example sentence in {target_language}
-    - example_en: example sentence in English
-    
-    Format as valid JSON array.
-    """
+    # Filter and process tokens
+    vocabulary_items = []
+    seen_words = set()
 
-    response = model.predict(prompt, max_output_tokens=1024, temperature=0.1)
+    for line in parsed.split('\n'):
+        if line == 'EOS' or not line.strip():
+            continue
 
-    try:
-        # Parse the response as JSON
-        vocabulary = json.loads(response.text)
-        logger.info("vocabulary_extracted", count=len(vocabulary))
-        return vocabulary
-    except json.JSONDecodeError:
-        logger.warning("failed_to_parse_vocabulary", response=response.text)
-        return []
+        # Parse MeCab output: 表層形\t品詞,品詞細分類1,品詞細分類2,品詞細分類3,活用型,活用形,原形,読み,発音
+        parts = line.split('\t')
+        if len(parts) < 2:
+            continue
+
+        surface = parts[0]  # 表層形 (surface form)
+        features = parts[1].split(',')  # 品詞情報 (part of speech info)
+
+        if len(features) < 8:
+            continue
+
+        # Skip punctuation, numbers, and very short tokens
+        if (len(surface) < 2 or
+            features[0] in ['記号', '助詞', '助動詞'] or
+            features[0] == '接尾辞' or
+                surface in seen_words):
+            continue
+
+        word = surface
+        seen_words.add(word)
+
+        # Get reading (pronunciation) - 読み field
+        reading = features[7] if len(
+            features) > 7 and features[7] != '*' else word
+
+        # Determine part of speech
+        pos = _map_part_of_speech(features[0])
+
+        vocab_item = {
+            "word": word,
+            "reading": reading,
+            "part_of_speech": pos,
+        }
+
+        vocabulary_items.append(vocab_item)
+
+    logger.info("vocabulary_extracted", count=len(vocabulary_items))
+    return vocabulary_items
 
 
-def translate_text(text: str, target_language: str) -> str:
+def _map_part_of_speech(mecab_pos: str) -> str:
+    """Map MeCab part-of-speech to English equivalents."""
+    pos_mapping = {
+        '名詞': 'noun',
+        '動詞': 'verb',
+        '形容詞': 'adjective',
+        '副詞': 'adverb',
+        '接続詞': 'conjunction',
+        '代名詞': 'pronoun',
+        '連体詞': 'determiner',
+        '感動詞': 'interjection'
+    }
+    return pos_mapping.get(mecab_pos, 'other')
+
+
+def translate_text(text: str) -> str:
     """
     Translate text to target language.
 
@@ -88,28 +115,21 @@ def translate_text(text: str, target_language: str) -> str:
         Translated text
     """
     logger.info(
-        "translating_text", text_length=len(text), target_language=target_language
+        "translating_text", text_length=len(text)
     )
 
-    # For Japanese to English translation
-    if target_language == "en":
-        result = translate_client.translate(text, target_language="en")
-        return result["translatedText"]
-    else:
-        # For other languages, translate to English
-        result = translate_client.translate(text, target_language="en")
-        return result["translatedText"]
+    result = translate_client.translate(text, target_language="en")
+    return result["translatedText"]
 
 
 def process_transcript(
-    transcript_path: str, target_language: str, job_id: str
+    transcript_path: str, job_id: str
 ) -> Dict[str, Any]:
     """
     Process transcript and extract vocabulary.
 
     Args:
         transcript_path: Path to transcript file
-        target_language: Target language for translation
         job_id: Unique job identifier
 
     Returns:
@@ -143,14 +163,14 @@ def process_transcript(
     # Translate sentences
     translated_sentences = []
     for sentence, timestamp in sentences:
-        translated = translate_text(sentence, target_language)
+        translated = translate_text(sentence)
         translated_sentences.append(
             {"original": sentence, "translated": translated, "timestamp": timestamp}
         )
 
     # Extract vocabulary from the full text
     full_text = " ".join([word for word, _ in word_timings])
-    vocabulary = extract_vocabulary(full_text, target_language)
+    vocabulary = extract_vocabulary(full_text)
 
     # Save processed data
     processed_data = {
@@ -180,7 +200,7 @@ def process_transcript(
 
 
 @functions_framework.http
-def process_translation(request) -> Dict[str, Any]:
+def process_translation(request) -> tuple[Dict[str, str], int]:
     """
     Cloud Function entry point.
 
@@ -197,20 +217,17 @@ def process_translation(request) -> Dict[str, Any]:
         return {"error": "No request data provided"}, 400
 
     transcript_path = request_json.get("transcript_path")
-    target_language = request_json.get("target_language")
     job_id = request_json.get("job_id")
 
     if not transcript_path:
         return {"error": "transcript_path is required"}, 400
-    if not target_language:
-        return {"error": "target_language is required"}, 400
     if not job_id:
         return {"error": "job_id is required"}, 400
 
     try:
-        result = process_transcript(transcript_path, target_language, job_id)
+        result = process_transcript(transcript_path, job_id)
 
-        return {"status": "success", **result}
+        return {"status": "success", **result}, 200
 
     except Exception as e:
         logger.exception(

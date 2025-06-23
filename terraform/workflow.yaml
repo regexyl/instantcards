@@ -4,10 +4,26 @@ main:
     - init:
         assign:
           - video_url: $${input.video_url}
-          - target_language: $${input.target_language}
           - email: $${input.email}
           - job_id: $${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
           - start_time: $${sys.now()}
+
+    - create_job:
+        try:
+          call: http.post
+          args:
+            url: ${job_manager_url}
+            body:
+              action: 'create'
+              job_id: $${job_id}
+              video_url: $${video_url}
+          result: job_result
+        retry:
+          max_retries: 3
+          backoff:
+            initial_delay: 1
+            max_delay: 60
+            multiplier: 2
 
     - extract_audio:
         try:
@@ -25,7 +41,7 @@ main:
             max_delay: 60
             multiplier: 2
 
-    - transcribe:
+    - transcribe_and_translate:
         try:
           call: http.post
           args:
@@ -41,30 +57,13 @@ main:
             max_delay: 60
             multiplier: 2
 
-    - translate:
-        try:
-          call: http.post
-          args:
-            url: ${translation_processor_url}
-            body:
-              transcript_path: $${transcription_result.body.transcript_path}
-              target_language: $${target_language}
-              job_id: $${job_id}
-          result: translation_result
-        retry:
-          max_retries: 3
-          backoff:
-            initial_delay: 1
-            max_delay: 60
-            multiplier: 2
-
     - create_cards:
         try:
           call: http.post
           args:
             url: ${cards_processor_url}
             body:
-              translation_data: $${translation_result.body}
+              translation_data: $${transcription_result.body}
               job_id: $${job_id}
           result: cards_result
         retry:
@@ -84,7 +83,7 @@ main:
               job_id: $${job_id}
               stats:
                 cards_created: $${cards_result.body.cards_created}
-                new_words: $${translation_result.body.new_words}
+                new_words: $${transcription_result.body.new_words}
                 processing_time: $${sys.now() - start_time}
           result: notification_result
         retry:
@@ -100,5 +99,5 @@ main:
           status: 'completed'
           stats:
             cards_created: $${cards_result.body.cards_created}
-            new_words: $${translation_result.body.new_words}
+            new_words: $${transcription_result.body.new_words}
             processing_time: $${sys.now() - start_time}

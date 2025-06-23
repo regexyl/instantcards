@@ -24,7 +24,7 @@ def test_youtube_processor():
         '/',
         method='POST',
         data=json.dumps({
-            "video_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "video_url": "https://www.youtube.com/shorts/ZiIBb3g03kE",
             "job_id": "test-123",
         }),
         content_type='application/json'

@@ -1,4 +1,6 @@
-google-cloud-storage==2.14.0
-functions-framework==3.5.0
+google-cloud-storage==2.*
+functions-framework==3.*
 structlog==24.1.0
-requests==2.31.0 
+requests==2.*
+SQLAlchemy==2.0.41
+psycopg2-binary==2.9.*

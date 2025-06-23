@@ -41,4 +41,16 @@ variable "mochi_deck_url" {
 variable "sender_email" {
   description = "The email address to send notifications from"
   type        = string
-} 
+}
+
+variable "openai_api_key" {
+  description = "The OpenAI API key for transcription services"
+  type        = string
+  sensitive   = true
+}
+
+variable "db_url" {
+  description = "The database URL"
+  type        = string
+  sensitive   = true
+}

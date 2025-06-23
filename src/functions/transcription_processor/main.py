@@ -1,17 +1,23 @@
+from extract_atoms import extract_atoms
+from translate import translate
+from store_audio import store_audio
+from classes import Translation
 import os
 import json
-from typing import Dict, Any
+import asyncio
+from typing import Dict, Any, Optional
 import functions_framework
 from google.cloud import storage
-from google.cloud import speech_v1
+from openai import NotGiven, OpenAI
 import structlog
+import srt
+import tempfile
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Configure structured logging
+
 logger = structlog.get_logger()
-
-# Initialize clients
-storage_client = storage.Client()
-speech_client = speech_v1.SpeechClient()
+openai_client = OpenAI()
 
 
 def get_media_bucket() -> storage.Bucket:
@@ -19,106 +25,178 @@ def get_media_bucket() -> storage.Bucket:
     bucket_name = os.environ.get("MEDIA_BUCKET")
     if not bucket_name:
         raise ValueError("MEDIA_BUCKET environment variable not set")
+    storage_client = storage.Client()
     return storage_client.bucket(bucket_name)
 
 
-def transcribe_audio(audio_path: str, job_id: str) -> Dict[str, Any]:
+async def transcribe_audio(audio_path: str, from_language: Optional[str] = None) -> str:
     """
-    Transcribe audio file using Google Speech-to-Text.
+    Transcribe audio file using OpenAI Whisper.
+
+    Args:
+        audio_path: Path to audio file in Cloud Storage
+        from_language: Optional language hint for transcription
+
+    Returns:
+        SRT transcription text
+    """
+    logger.info("transcribing_audio", audio_path=audio_path,
+                from_language=from_language)
+
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(os.environ.get("MEDIA_BUCKET"))
+    blob = bucket.blob(audio_path)
+
+    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+        blob.download_to_file(temp_file)
+        temp_file_path = temp_file.name
+
+    try:
+        with open(temp_file_path, "rb") as audio_file:
+            transcription_text = openai_client.audio.transcriptions.create(
+                file=audio_file,
+                model="whisper-1",
+                response_format="srt",
+                language=from_language if from_language else NotGiven()
+            )
+
+            # Make SRT content legal
+            srt.make_legal_content(transcription_text)
+
+            logger.info("transcription_complete",
+                        audio_path=audio_path,
+                        text_length=len(transcription_text))
+
+            return transcription_text
+
+    finally:
+        # Clean up the temporary file
+        os.unlink(temp_file_path)
+
+
+async def process_translation_parallel(translation: Translation, job_id: str, original_audio_path: str) -> Dict[str, Any]:
+    """
+    Execute the three processing functions in parallel.
+
+    Args:
+        translation: Translation object with transcription data
+        job_id: Unique job identifier
+        original_audio_path: Path to original audio file in Cloud Storage
+
+    Returns:
+        Combined results from all three functions
+    """
+    logger.info("starting_parallel_processing", job_id=job_id)
+
+    # Create tasks for parallel execution
+    store_task = asyncio.create_task(
+        asyncio.to_thread(store_audio, translation,
+                          job_id, original_audio_path)
+    )
+    translate_task = asyncio.create_task(
+        asyncio.to_thread(translate, translation, job_id)
+    )
+    extract_task = asyncio.create_task(
+        asyncio.to_thread(extract_atoms, translation, job_id)
+    )
+
+    # Wait for all tasks to complete
+    store_result, translate_result, extract_result = await asyncio.gather(
+        store_task, translate_task, extract_task, return_exceptions=True
+    )
+
+    # Check for exceptions
+    results = {}
+    if isinstance(store_result, Exception):
+        logger.error("store_audio_failed", job_id=job_id,
+                     error=str(store_result))
+        results["store_audio"] = {"error": str(store_result)}
+    else:
+        results["store_audio"] = store_result
+
+    if isinstance(translate_result, Exception):
+        logger.error("translate_failed", job_id=job_id,
+                     error=str(translate_result))
+        results["translate"] = {"error": str(translate_result)}
+    else:
+        results["translate"] = translate_result
+
+    if isinstance(extract_result, Exception):
+        logger.error("extract_atoms_failed", job_id=job_id,
+                     error=str(extract_result))
+        results["extract_atoms"] = {"error": str(extract_result)}
+    else:
+        results["extract_atoms"] = extract_result
+
+    # Add combined translation data
+    results["translation_data"] = translation.to_dict()
+
+    logger.info("parallel_processing_complete",
+                job_id=job_id,
+                store_success=not isinstance(store_result, Exception),
+                translate_success=not isinstance(translate_result, Exception),
+                extract_success=not isinstance(extract_result, Exception))
+
+    return results
+
+
+async def transcribe_and_process_audio(audio_path: str, job_id: str, from_language: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Main function: transcribe audio and process in parallel.
 
     Args:
         audio_path: Path to audio file in Cloud Storage
         job_id: Unique job identifier
+        from_language: Optional language hint for transcription
 
     Returns:
-        Dictionary with transcription results
+        Complete processing results
     """
-    logger.info("transcribing_audio", audio_path=audio_path, job_id=job_id)
-
-    # Get audio file from Cloud Storage
-    bucket = get_media_bucket()
-    blob = bucket.blob(audio_path)
-
-    # Download audio content
-    audio_content = blob.download_as_bytes()
-
-    # Configure speech recognition
-    audio = speech_v1.RecognitionAudio(content=audio_content)
-    config = speech_v1.RecognitionConfig(
-        encoding=speech_v1.RecognitionConfig.AudioEncoding.LINEAR16,
-        sample_rate_hertz=16000,
-        language_code="ja-JP",
-        enable_word_time_offsets=True,
-        enable_automatic_punctuation=True,
-    )
+    logger.info("starting_transcription_and_processing",
+                audio_path=audio_path, job_id=job_id, from_language=from_language)
 
     try:
-        # Start long-running recognition operation
-        operation = speech_client.long_running_recognize(config=config, audio=audio)
+        # Step 1: Transcribe audio
+        transcription_text = await transcribe_audio(audio_path, from_language)
 
-        logger.info(
-            "waiting_for_operation",
-            operation_id=operation.operation.name,
-            job_id=job_id,
-        )
+        # Step 2: Create Translation object
+        translation = Translation(transcription_text)
 
-        # Wait for operation to complete
-        response = operation.result()
+        # Step 3: Process in parallel
+        results = await process_translation_parallel(translation, job_id, audio_path)
 
-        # Process results into a more structured format with timing
-        transcription = []
-        for result in response.results:
-            for word_info in result.alternatives[0].words:
-                transcription.append(
-                    {
-                        "word": word_info.word,
-                        "start_time": word_info.start_time.total_seconds(),
-                        "end_time": word_info.end_time.total_seconds(),
-                        "confidence": result.alternatives[0].confidence,
-                    }
-                )
+        # Add metadata
+        results["job_id"] = job_id
+        results["audio_path"] = audio_path
+        results["blocks_count"] = translation.get_block_count()
+        results["duration"] = translation.get_duration()
+        results["total_atoms"] = translation.get_total_atoms()
+        results["new_atoms"] = translation.get_new_atoms_count()
+        results["audio_segments_count"] = translation.get_audio_segments_count()
 
-        # Save transcription to GCS
-        bucket = get_media_bucket()
-        transcript_path = f"transcripts/{job_id}/transcript.json"
-        blob = bucket.blob(transcript_path)
+        logger.info("transcription_and_processing_complete",
+                    job_id=job_id,
+                    blocks_count=translation.get_block_count(),
+                    total_atoms=translation.get_total_atoms())
 
-        blob.upload_from_string(
-            json.dumps(
-                {"job_id": job_id, "language": "ja-JP", "words": transcription},
-                ensure_ascii=False,
-            ),
-            content_type="application/json",
-        )
-
-        logger.info(
-            "transcription_complete",
-            transcript_path=transcript_path,
-            word_count=len(transcription),
-        )
-
-        return {
-            "transcript_path": transcript_path,
-            "word_count": len(transcription),
-            "language": "ja-JP",
-        }
+        return results
 
     except Exception as e:
-        logger.exception(
-            "transcription_failed", error=str(e), audio_path=audio_path, job_id=job_id
-        )
+        logger.exception("transcription_and_processing_failed",
+                         job_id=job_id, audio_path=audio_path, error=str(e))
         raise
 
 
 @functions_framework.http
-def process_transcription(request) -> Dict[str, Any]:
+def process_transcription_and_translation(request) -> tuple[Dict[str, Any], int]:
     """
     Cloud Function entry point.
 
     Expected request body:
     {
         "audio_path": "audio/job-123/audio.wav",
-        "job_id": "job-123"
+        "job_id": "job-123",
+        "from_language": "ja"  # Optional language hint
     }
     """
     request_json = request.get_json()
@@ -128,6 +206,7 @@ def process_transcription(request) -> Dict[str, Any]:
 
     audio_path = request_json.get("audio_path")
     job_id = request_json.get("job_id")
+    from_language = request_json.get("from_language")
 
     if not audio_path:
         return {"error": "audio_path is required"}, 400
@@ -135,15 +214,14 @@ def process_transcription(request) -> Dict[str, Any]:
         return {"error": "job_id is required"}, 400
 
     try:
-        result = transcribe_audio(audio_path, job_id)
+        # Run the async function
+        result = asyncio.run(
+            transcribe_and_process_audio(audio_path, job_id, from_language)
+        )
 
-        return {"status": "success", **result}
+        return {"status": "success", **result}, 200
 
     except Exception as e:
-        logger.exception(
-            "process_transcription_failed",
-            error=str(e),
-            audio_path=audio_path,
-            job_id=job_id,
-        )
+        logger.exception("process_transcription_and_translation_failed",
+                         error=str(e), audio_path=audio_path, job_id=job_id)
         return {"error": str(e), "status": "error"}, 500

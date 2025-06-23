@@ -1,0 +1,4 @@
+sqlalchemy==2.0.41
+psycopg2-binary>=2.9.0
+structlog>=24.1.0
+sqlacodegen>=3.0.0 

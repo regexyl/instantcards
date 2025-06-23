@@ -1,10 +1,13 @@
+from database.sqlalchemy_client import update_job_status
 import os
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import functions_framework
 import requests
 import structlog
 from datetime import datetime
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Configure structured logging
 logger = structlog.get_logger()
@@ -40,6 +43,13 @@ def send_completion_email(email: str, stats: Dict[str, Any], job_id: str) -> Non
         job_id: Unique job identifier
     """
     logger.info("sending_email", email=email, job_id=job_id)
+
+    # Update job status to completed
+    try:
+        update_job_status(job_id, "completed", stats)
+    except Exception as e:
+        logger.warning("failed_to_update_job_status",
+                       job_id=job_id, error=str(e))
 
     # Format the processing time
     processing_time = format_duration(stats.get("processing_time", 0))
@@ -79,7 +89,8 @@ def send_completion_email(email: str, stats: Dict[str, Any], job_id: str) -> Non
     }
 
     try:
-        response = requests.post(POSTMARK_API_ENDPOINT, headers=headers, json=payload)
+        response = requests.post(
+            POSTMARK_API_ENDPOINT, headers=headers, json=payload)
         response.raise_for_status()
 
         logger.info(
@@ -90,12 +101,13 @@ def send_completion_email(email: str, stats: Dict[str, Any], job_id: str) -> Non
         )
 
     except requests.exceptions.RequestException as e:
-        logger.exception("email_send_failed", error=str(e), email=email, job_id=job_id)
+        logger.exception("email_send_failed", error=str(e),
+                         email=email, job_id=job_id)
         raise
 
 
 @functions_framework.http
-def send_notification(request) -> Dict[str, Any]:
+def send_notification(request) -> tuple[Dict[str, Any], int]:
     """
     Cloud Function entry point.
 
@@ -127,7 +139,7 @@ def send_notification(request) -> Dict[str, Any]:
     try:
         send_completion_email(email, stats, job_id)
 
-        return {"status": "success", "message": f"Notification sent to {email}"}
+        return {"status": "success", "message": f"Notification sent to {email}"}, 200
 
     except Exception as e:
         logger.exception(
