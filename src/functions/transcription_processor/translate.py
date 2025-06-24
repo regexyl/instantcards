@@ -1,8 +1,9 @@
+import os
 from typing import Dict, Any
 from google.cloud import translate_v2
 from openai import OpenAI
 import structlog
-from classes import Translation
+from .classes import Translation
 
 logger = structlog.get_logger()
 translate_client = translate_v2.Client()

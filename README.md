@@ -20,6 +20,7 @@ sqlacodegen <DB_URL>
 
 - Auth
 - Handle lexemes
+- Flag when unidic-lite is not able to handle certain words
 - Support non-Japanese languages (`from_language`)
 - Translate atoms (currently relying on Mochi here)
 - Evaluate transcription confidence level

@@ -1,7 +1,7 @@
-from typing import Dict, Any, List, NamedTuple
+from typing import Dict, Any, List, NamedTuple, Optional
 import structlog
 import MeCab
-from classes import Block, Translation, Atom
+from .classes import Block, Translation, Atom
 
 logger = structlog.get_logger()
 
@@ -10,20 +10,17 @@ class MeCabToken(NamedTuple):
     """Structured representation of a MeCab token."""
     surface: str  # 表層形 (surface form)
     pos: str  # 品詞 (part of speech)
-    pos_detail1: str  # 品詞細分類1
-    pos_detail2: str  # 品詞細分類2
-    pos_detail3: str  # 品詞細分類3
-    conjugation_type: str  # 活用型
-    conjugation_form: str  # 活用形
+    pos_details: Optional[list[str]]  # 品詞細分類
+    conjugation_type: Optional[str]  # 活用型
+    conjugation_form: Optional[str]  # 活用形
+    conjugation_form_number: Optional[str]  # 活用形番号
     base_form: str  # 原形 (base form)
     reading: str  # 読み (reading/pronunciation)
     pronunciation: str  # 発音 (pronunciation)
 
     def get_metadata(self) -> dict:
         return {
-            "pos_detail1": self.pos_detail1,
-            "pos_detail2": self.pos_detail2,
-            "pos_detail3": self.pos_detail3,
+            "pos_details": self.pos_details,
             "conjugation_type": self.conjugation_type,
             "conjugation_form": self.conjugation_form,
             "reading": self.reading,
@@ -127,7 +124,7 @@ def _parse_mecab_output(text: str) -> List[MeCabToken]:
     Returns:
         List of MeCabToken objects with parsed information
     """
-    tagger = MeCab.Tagger("0chasen")
+    tagger = MeCab.Tagger()
     parsed = tagger.parse(text)
 
     tokens = []
@@ -137,26 +134,33 @@ def _parse_mecab_output(text: str) -> List[MeCabToken]:
             continue
 
         # Parse MeCab output format:
-        # 表層形\t品詞,品詞細分類1,品詞細分類2,品詞細分類3,活用型,活用形,原形,読み,発音
+        # 表層形\t読み\t発音\t原形\t品詞-品詞細分類1\t活用型\t活用形\t活用形詳細\t活用形番号
+        # surface_form\treading\tpronunciation\tbase_form\tpart_of_speech-part_of_speech_detail1\tconjugation_type\tconjugation_form\tconjugation_form_detail\tconjugation_form_number
         parts = line.split('\t')
+        # print(f"😸 {parts}")
         if len(parts) < 2:
             continue
 
-        surface = parts[0]
-        features = parts[1].split(',')
-        pos = _map_part_of_speech(features[0])
+        surface, reading, pronunciation, base_form, pos_info, conjugation_type, conjugation_form, conjugation_form_number = parts + \
+            [None] * (8 - len(parts))
+        pos_info = pos_info.split('-')
+        pos = pos_info[0]
+        pos_rest_of_details = pos_info[1:]
+        pos_en = _map_part_of_speech(pos, surface)
+
+        if pos_en in ['symbol', 'auxiliary_symbol']:
+            continue
 
         token = MeCabToken(
             surface=surface,
-            pos=pos,
-            pos_detail1=features[1] if len(features) > 1 else '',
-            pos_detail2=features[2] if len(features) > 2 else '',
-            pos_detail3=features[3] if len(features) > 3 else '',
-            conjugation_type=features[4] if len(features) > 4 else '',
-            conjugation_form=features[5] if len(features) > 5 else '',
-            base_form=features[6] if len(features) > 6 else '',
-            reading=features[7] if len(features) > 7 else '',
-            pronunciation=features[8] if len(features) > 8 else ''
+            pos=pos_en,
+            pos_details=pos_rest_of_details,
+            conjugation_type=conjugation_type,
+            conjugation_form=conjugation_form,
+            conjugation_form_number=conjugation_form_number,
+            base_form=base_form,
+            reading=reading,
+            pronunciation=pronunciation
         )
 
         tokens.append(token)
@@ -164,7 +168,7 @@ def _parse_mecab_output(text: str) -> List[MeCabToken]:
     return tokens
 
 
-def _map_part_of_speech(mecab_pos: str) -> str:
+def _map_part_of_speech(mecab_pos: str, word: str) -> str:
     """Map MeCab part-of-speech to English equivalents."""
     pos_mapping = {
         '名詞': 'noun',
@@ -180,16 +184,20 @@ def _map_part_of_speech(mecab_pos: str) -> str:
         '感動詞': 'interjection',
         '記号': 'symbol',
         '接頭詞': 'prefix',
+        "接頭辞": "prefix",
         '接尾辞': 'suffix',
+        "補助記号": "auxiliary_symbol",
         'フィラー': 'filler',
         'その他': 'other',
-        '未知語': 'unknown'
+        '未知語': 'unknown',
     }
 
+    # print(f"🐳 {mecab_pos} | {word}")
     mapped_pos = pos_mapping.get(mecab_pos, 'other')
 
     if mapped_pos == 'other' and mecab_pos not in pos_mapping:
         logger.error("part_of_speech_mapping_failed",
+                     word=word,
                      mecab_pos=mecab_pos,
                      mapped_to=mapped_pos)
 

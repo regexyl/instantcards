@@ -1,9 +1,4 @@
-from extract_atoms import extract_atoms
-from translate import translate
-from store_audio import store_audio
-from classes import Translation
 import os
-import json
 import asyncio
 from typing import Dict, Any, Optional
 import functions_framework
@@ -12,8 +7,10 @@ from openai import NotGiven, OpenAI
 import structlog
 import srt
 import tempfile
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from .extract_atoms import extract_atoms
+from .translate import translate
+from .store_audio import store_audio
+from .classes import Translation
 
 
 logger = structlog.get_logger()

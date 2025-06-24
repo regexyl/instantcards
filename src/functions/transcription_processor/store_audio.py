@@ -5,7 +5,7 @@ import subprocess
 from typing import Dict, Any
 from google.cloud import storage
 import structlog
-from classes import Translation
+from .classes import Translation
 
 logger = structlog.get_logger()
 storage_client = storage.Client()
