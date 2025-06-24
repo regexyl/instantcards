@@ -101,6 +101,7 @@ def create_single_card(
         "template-id": template_id,
         # Ensures atom cards come before their respective block cards
         "pos": int(time.time()),
+        "review-reversed": True,
         "fields": {
             "name": {
                 "id": "name",
