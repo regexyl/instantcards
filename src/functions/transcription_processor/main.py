@@ -86,7 +86,7 @@ async def process_translation_parallel(translation: Translation, job_id: str, or
     logger.info("starting_parallel_processing", job_id=job_id)
 
     # Create tasks for parallel execution
-    store_task = asyncio.create_task(
+    store_audio_task = asyncio.create_task(
         asyncio.to_thread(store_audio, translation,
                           job_id, original_audio_path)
     )
@@ -97,33 +97,19 @@ async def process_translation_parallel(translation: Translation, job_id: str, or
         asyncio.to_thread(extract_atoms, translation, job_id)
     )
 
-    # Wait for all tasks to complete
     store_result, translate_result, extract_result = await asyncio.gather(
-        store_task, translate_task, extract_task, return_exceptions=True
+        store_audio_task, translate_task, extract_task, return_exceptions=True
     )
 
-    # Check for exceptions
     results = {}
-    if isinstance(store_result, Exception):
-        logger.error("store_audio_failed", job_id=job_id,
-                     error=str(store_result))
-        results["store_audio"] = {"error": str(store_result)}
-    else:
-        results["store_audio"] = store_result
-
-    if isinstance(translate_result, Exception):
-        logger.error("translate_failed", job_id=job_id,
-                     error=str(translate_result))
-        results["translate"] = {"error": str(translate_result)}
-    else:
-        results["translate"] = translate_result
-
-    if isinstance(extract_result, Exception):
-        logger.error("extract_atoms_failed", job_id=job_id,
-                     error=str(extract_result))
-        results["extract_atoms"] = {"error": str(extract_result)}
-    else:
-        results["extract_atoms"] = extract_result
+    for result, name in [(store_result, "store_audio"),
+                         (translate_result, "translate"),
+                         (extract_result, "extract_atoms")]:
+        if isinstance(result, Exception):
+            logger.error(f"{name}_failed", job_id=job_id, error=str(result))
+            results[name] = {"error": str(result)}
+        else:
+            results[name] = result
 
     # Add combined translation data
     results["translation_data"] = translation.to_dict()

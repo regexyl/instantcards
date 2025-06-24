@@ -192,7 +192,6 @@ def _map_part_of_speech(mecab_pos: str, word: str) -> str:
         '未知語': 'unknown',
     }
 
-    # print(f"🐳 {mecab_pos} | {word}")
     mapped_pos = pos_mapping.get(mecab_pos, 'other')
 
     if mapped_pos == 'other' and mecab_pos not in pos_mapping:

@@ -182,7 +182,8 @@ class Atom(Base):
     workflow: Mapped['Job'] = relationship('Job', back_populates='atom')
     block_atom: Mapped[List['BlockAtom']] = relationship(
         'BlockAtom', back_populates='atom')
-    card: Mapped[List['Card']] = relationship('Card', back_populates='atom')
+    card: Mapped[Optional['Card']] = relationship(
+        'Card', uselist=False, back_populates='atom')
 
 
 class Block(Base):
@@ -207,7 +208,8 @@ class Block(Base):
     workflow: Mapped['Job'] = relationship('Job', back_populates='block')
     block_atom: Mapped[List['BlockAtom']] = relationship(
         'BlockAtom', back_populates='block')
-    card: Mapped[List['Card']] = relationship('Card', back_populates='block')
+    card: Mapped[Optional['Card']] = relationship(
+        'Card', uselist=False, back_populates='block')
 
 
 class BlockAtom(Base):
@@ -246,6 +248,10 @@ class Card(Base):
         ForeignKeyConstraint(['workflow_id'], ['job.workflow_id'],
                              ondelete='CASCADE', name='card_workflow_id_fkey'),
         PrimaryKeyConstraint('id', name='card_pkey'),
+        UniqueConstraint('atom_id', name='card_atom_id_unique'),
+        UniqueConstraint('block_id', name='card_block_id_unique'),
+        Index('card_atom_id_unique_idx', 'atom_id', unique=True),
+        Index('card_block_id_unique_idx', 'block_id', unique=True),
         Index('idx_card_atom_id', 'atom_id'),
         Index('idx_card_block_id', 'block_id'),
         Index('idx_card_destination_id', 'destination_id'),
@@ -273,4 +279,3 @@ class Card(Base):
         'Atom', back_populates='card')
     block: Mapped[Optional['Block']] = relationship(
         'Block', back_populates='card')
-    workflow: Mapped['Job'] = relationship('Job', back_populates='card')

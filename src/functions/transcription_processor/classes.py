@@ -12,13 +12,21 @@ class Atom:
     base_form: str
     part_of_speech: str
     metadata: Optional[dict] = None
-    in_db: bool = False
     card_id: Optional[str] = None
 
     def __post_init__(self):
         """Validate atom data after initialization."""
         if not self.value.strip():
             raise ValueError("Atom value cannot be empty")
+
+    def __eq__(self, other):
+        if not isinstance(other, Atom):
+            return False
+        return self.value == other.value
+
+    def set_card_id(self, card_id: str) -> None:
+        """Set the card ID for this atom."""
+        self.card_id = card_id
 
 
 @dataclass
@@ -48,7 +56,7 @@ class Block:
 
     def get_new_atoms(self) -> List[Atom]:
         """Get atoms that are not in the database."""
-        return [atom for atom in self.atoms if not atom.in_db]
+        return [atom for atom in self.atoms if not atom.card_id]
 
 
 class Translation:
@@ -127,6 +135,13 @@ class Translation:
         """Get the count of atoms not in the database."""
         return sum(len(block.get_new_atoms()) for block in self.blocks)
 
+    @property
+    def atoms(self) -> Generator[Atom, None, None]:
+        """Get all atoms across all blocks."""
+        for block in self.blocks:
+            for atom in block.atoms:
+                yield atom
+
     def add_atoms_to_block(self, block_index: int, atoms: List[Atom]) -> None:
         """Add atoms to a specific block."""
         if block_index >= len(self.blocks) or block_index < 0:
@@ -170,7 +185,6 @@ class Translation:
                     "atoms": [
                         {
                             "value": atom.value,
-                            "in_db": atom.in_db,
                             "card_id": atom.card_id
                         }
                         for atom in block.atoms
