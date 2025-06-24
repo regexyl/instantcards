@@ -22,7 +22,7 @@ def create_single_card_with_retry(
 ) -> Dict[str, Any]:
     """
     Create a single card with retry logic.
-    
+
     Args:
         name_value: Value for the 'name' field of the card
         template_id: Template ID to use for the card
@@ -30,10 +30,10 @@ def create_single_card_with_retry(
         base_url: Base URL for the Mochi API
         max_retries: Maximum number of retry attempts (default: 3)
         retry_delay: Delay between retries in seconds (default: 1.0)
-        
+
     Returns:
         Created card response from the API
-        
+
     Raises:
         Exception: If all retry attempts fail
     """
@@ -54,9 +54,11 @@ def create_single_card_with_retry(
                     f"All {max_retries + 1} attempts failed for value '{name_value}': {e}"
                 )
                 raise
-    
+
     # This should never be reached, but just in case
-    raise RuntimeError(f"Failed to create card for value '{name_value}' after {max_retries + 1} attempts")
+    raise RuntimeError(
+        f"Failed to create card for value '{name_value}' after {max_retries + 1} attempts")
+
 
 def create_single_card(
     name_value: str,
@@ -97,6 +99,8 @@ def create_single_card(
     payload = {
         "deck-id": deck_id,
         "template-id": template_id,
+        # Ensures atom cards come before their respective block cards
+        "pos": int(time.time()),
         "fields": {
             "name": {
                 "id": "name",
