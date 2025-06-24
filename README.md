@@ -19,6 +19,7 @@ sqlacodegen <DB_URL>
 ## Improvements
 
 - Auth
+- Send every error initially through email (for me)
 - Handle lexemes
 - Flag when unidic-lite is not able to handle certain words
 - Batch API calls to Mochi

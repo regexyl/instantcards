@@ -1,12 +1,12 @@
-import os
 import asyncio
 from typing import Dict, Any, Optional
 import functions_framework
-from google.cloud import storage
 from openai import NotGiven, OpenAI
 import structlog
-import srt
-import tempfile
+
+from functions.transcription_processor.transcribe import transcribe_audio
+
+from .create_atom_cards import create_atom_cards
 from .extract_atoms import extract_atoms
 from .translate import translate
 from .store_audio import store_audio
@@ -14,61 +14,6 @@ from .classes import Translation
 
 
 logger = structlog.get_logger()
-openai_client = OpenAI()
-
-
-def get_media_bucket() -> storage.Bucket:
-    """Get the media storage bucket."""
-    bucket_name = os.environ.get("MEDIA_BUCKET")
-    if not bucket_name:
-        raise ValueError("MEDIA_BUCKET environment variable not set")
-    storage_client = storage.Client()
-    return storage_client.bucket(bucket_name)
-
-
-async def transcribe_audio(audio_path: str, from_language: Optional[str] = None) -> str:
-    """
-    Transcribe audio file using OpenAI Whisper.
-
-    Args:
-        audio_path: Path to audio file in Cloud Storage
-        from_language: Optional language hint for transcription
-
-    Returns:
-        SRT transcription text
-    """
-    logger.info("transcribing_audio", audio_path=audio_path,
-                from_language=from_language)
-
-    storage_client = storage.Client()
-    bucket = storage_client.bucket(os.environ.get("MEDIA_BUCKET"))
-    blob = bucket.blob(audio_path)
-
-    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-        blob.download_to_file(temp_file)
-        temp_file_path = temp_file.name
-
-    try:
-        with open(temp_file_path, "rb") as audio_file:
-            transcription_text = openai_client.audio.transcriptions.create(
-                file=audio_file,
-                model="whisper-1",
-                response_format="srt",
-                language=from_language if from_language else NotGiven()
-            )
-
-            # Make SRT content legal
-            srt.make_legal_content(transcription_text)
-
-            logger.info("transcription_complete",
-                        audio_path=audio_path,
-                        text_length=len(transcription_text))
-
-            return transcription_text
-
-    finally:
-        # Clean up the temporary file
-        os.unlink(temp_file_path)
 
 
 async def process_translation_parallel(translation: Translation, job_id: str, original_audio_path: str) -> Dict[str, Any]:
@@ -85,7 +30,6 @@ async def process_translation_parallel(translation: Translation, job_id: str, or
     """
     logger.info("starting_parallel_processing", job_id=job_id)
 
-    # Create tasks for parallel execution
     store_audio_task = asyncio.create_task(
         asyncio.to_thread(store_audio, translation,
                           job_id, original_audio_path)
@@ -93,32 +37,36 @@ async def process_translation_parallel(translation: Translation, job_id: str, or
     translate_task = asyncio.create_task(
         asyncio.to_thread(translate, translation, job_id)
     )
-    extract_task = asyncio.create_task(
-        asyncio.to_thread(extract_atoms, translation, job_id)
+
+    def extract_and_create_atom_cards(translation: Translation, job_id: str) -> None:
+        extract_atoms(translation, job_id)
+        create_atom_cards(translation)
+
+    extract_and_create_atom_cards_task = asyncio.create_task(
+        asyncio.to_thread(extract_and_create_atom_cards, translation, job_id)
     )
 
-    store_result, translate_result, extract_result = await asyncio.gather(
-        store_audio_task, translate_task, extract_task, return_exceptions=True
+    store_result, translate_result, extract_and_create_atom_cards_result = await asyncio.gather(
+        store_audio_task, translate_task, extract_and_create_atom_cards_task, return_exceptions=True
     )
 
     results = {}
     for result, name in [(store_result, "store_audio"),
                          (translate_result, "translate"),
-                         (extract_result, "extract_atoms")]:
+                         (extract_and_create_atom_cards_result, "extract_and_create_atom_cards")]:
         if isinstance(result, Exception):
             logger.error(f"{name}_failed", job_id=job_id, error=str(result))
             results[name] = {"error": str(result)}
         else:
             results[name] = result
 
-    # Add combined translation data
     results["translation_data"] = translation.to_dict()
 
     logger.info("parallel_processing_complete",
                 job_id=job_id,
                 store_success=not isinstance(store_result, Exception),
                 translate_success=not isinstance(translate_result, Exception),
-                extract_success=not isinstance(extract_result, Exception))
+                extract_success=not isinstance(extract_and_create_atom_cards_result, Exception))
 
     return results
 
@@ -139,16 +87,10 @@ async def transcribe_and_process_audio(audio_path: str, job_id: str, from_langua
                 audio_path=audio_path, job_id=job_id, from_language=from_language)
 
     try:
-        # Step 1: Transcribe audio
         transcription_text = await transcribe_audio(audio_path, from_language)
-
-        # Step 2: Create Translation object
         translation = Translation(transcription_text)
-
-        # Step 3: Process in parallel
         results = await process_translation_parallel(translation, job_id, audio_path)
 
-        # Add metadata
         results["job_id"] = job_id
         results["audio_path"] = audio_path
         results["blocks_count"] = translation.get_block_count()
