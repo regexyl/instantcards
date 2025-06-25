@@ -4,6 +4,7 @@ import functions_framework
 from openai import NotGiven, OpenAI
 import structlog
 
+from functions.transcription_processor.create_block_cards import create_block_cards
 from functions.transcription_processor.transcribe import transcribe_audio
 
 from .create_atom_cards import create_atom_cards
@@ -16,12 +17,13 @@ from .classes import Translation
 logger = structlog.get_logger()
 
 
-async def process_translation_parallel(translation: Translation, job_id: str, original_audio_path: str) -> Dict[str, Any]:
+async def process_translation_parallel(translation: Translation, name: str, job_id: str, original_audio_path: str) -> Dict[str, Any]:
     """
     Execute the three processing functions in parallel.
 
     Args:
         translation: Translation object with transcription data
+        name: Name of the audio file
         job_id: Unique job identifier
         original_audio_path: Path to original audio file in Cloud Storage
 
@@ -50,6 +52,8 @@ async def process_translation_parallel(translation: Translation, job_id: str, or
         store_audio_task, translate_task, extract_and_create_atom_cards_task, return_exceptions=True
     )
 
+    create_block_cards(translation, name)
+
     results = {}
     for result, name in [(store_result, "store_audio"),
                          (translate_result, "translate"),
@@ -71,12 +75,13 @@ async def process_translation_parallel(translation: Translation, job_id: str, or
     return results
 
 
-async def transcribe_and_process_audio(audio_path: str, job_id: str, from_language: Optional[str] = None) -> Dict[str, Any]:
+async def transcribe_and_process_audio(audio_path: str, name: str, job_id: str, from_language: Optional[str] = None) -> Dict[str, Any]:
     """
     Main function: transcribe audio and process in parallel.
 
     Args:
         audio_path: Path to audio file in Cloud Storage
+        name: Name of the audio file
         job_id: Unique job identifier
         from_language: Optional language hint for transcription
 
@@ -89,7 +94,7 @@ async def transcribe_and_process_audio(audio_path: str, job_id: str, from_langua
     try:
         transcription_text = await transcribe_audio(audio_path, from_language)
         translation = Translation(transcription_text)
-        results = await process_translation_parallel(translation, job_id, audio_path)
+        results = await process_translation_parallel(translation, name, job_id, audio_path)
 
         results["job_id"] = job_id
         results["audio_path"] = audio_path
@@ -130,18 +135,21 @@ def process_transcription_and_translation(request) -> tuple[Dict[str, Any], int]
         return {"error": "No request data provided"}, 400
 
     audio_path = request_json.get("audio_path")
+    name = request_json.get("name")
     job_id = request_json.get("job_id")
     from_language = request_json.get("from_language")
 
+    if not name:
+        return {"error": "name is required"}, 400
     if not audio_path:
         return {"error": "audio_path is required"}, 400
     if not job_id:
         return {"error": "job_id is required"}, 400
 
     try:
-        # Run the async function
         result = asyncio.run(
-            transcribe_and_process_audio(audio_path, job_id, from_language)
+            transcribe_and_process_audio(
+                audio_path, name, job_id, from_language)
         )
 
         return {"status": "success", **result}, 200

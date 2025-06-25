@@ -35,6 +35,7 @@ class Block:
     start_time: float
     end_time: float
     value: str
+    card_id: Optional[str] = None
     atoms: List[Atom] = field(default_factory=list)
     translated_value: Optional[str] = None
     audio_url: Optional[str] = None

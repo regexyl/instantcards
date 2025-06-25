@@ -91,7 +91,7 @@ def create_single_card(
         raise ValueError("name_value is required")
 
     if not template_id:
-        template_id = os.getenv("MOCHI_TEMPLATE_ID")
+        template_id = os.getenv("MOCHI_ATOM_TEMPLATE_ID")
 
     if not deck_id:
         deck_id = os.getenv("MOCHI_DECK_ID")
@@ -127,7 +127,7 @@ def create_single_card(
         created_card = response.json()
 
         logger.info(
-            f"Successfully created card with ID: {created_card.get('id')}")
+            f"Successfully created atom card with ID: {created_card.get('id')}")
         return created_card
 
     except requests.RequestException as e:
@@ -178,7 +178,8 @@ def create_atom_cards(translation: Translation) -> None:
                 try:
                     card = future.result()
                     new_card_ids[value] = card['id']
-                    logger.info(f"Created card for value: {value}")
+                    logger.info(
+                        f"Created atom card (ID: {card['id']}) for value: {value}")
                 except Exception as e:
                     logger.error(
                         f"Failed to create card for value '{value}': {e}")
