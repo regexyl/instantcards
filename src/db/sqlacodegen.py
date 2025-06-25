@@ -21,7 +21,7 @@ class Base(DeclarativeBase):
             (bytes, serializable.Bytes()),
             (uuid.UUID, serializable.UUID()),
             (
-                datetime.time,  # Should be checked before datetime
+                datetime.time,
                 serializable.Time(str_format="%H:%M"),
             ),
             (
@@ -87,6 +87,7 @@ class Job(Base):
         DateTime(True), server_default=text('now()'))
     updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(
         DateTime(True), server_default=text('now()'))
+    name: Mapped[Optional[str]] = mapped_column(String(255))
 
     atom: Mapped[List['Atom']] = relationship(
         'Atom', back_populates='workflow')
