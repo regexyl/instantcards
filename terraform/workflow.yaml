@@ -45,28 +45,12 @@ main:
         try:
           call: http.post
           args:
-            url: ${transcription_processor_url}
+            url: ${transcription_translation_cards_processor_url}
             body:
               name: $${audio_result.body.name}
               audio_path: $${audio_result.body.audio_path}
               job_id: $${job_id}
           result: transcription_result
-        retry:
-          max_retries: 3
-          backoff:
-            initial_delay: 1
-            max_delay: 60
-            multiplier: 2
-
-    - create_cards:
-        try:
-          call: http.post
-          args:
-            url: ${cards_processor_url}
-            body:
-              translation_data: $${transcription_result.body}
-              job_id: $${job_id}
-          result: cards_result
         retry:
           max_retries: 3
           backoff:

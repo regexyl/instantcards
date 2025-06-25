@@ -136,11 +136,11 @@ module "youtube_processor" {
   }
 }
 
-module "transcription_processor" {
+module "transcription_translation_cards_processor" {
   source = "./modules/cloud_function"
   
-  name        = "transcription-processor"
-  description = "Transcribes audio and translates content using OpenAI Whisper and Google Translate"
+  name        = "transcription-translation-cards-processor"
+  description = "Transcribes audio and translates content using OpenAI. Creates cards in Mochi."
   runtime     = "python310"
   
   source_dir  = "../src/functions/transcription_processor"
@@ -156,24 +156,6 @@ module "transcription_processor" {
   }
 }
 
-module "cards_processor" {
-  source = "./modules/cloud_function"
-  
-  name        = "cards-processor"
-  description = "Creates flashcards from processed content"
-  runtime     = "python310"
-  
-  source_dir  = "../src/functions/cards_processor"
-  entry_point = "create_cards"
-
-  secret_environment_variables = {
-    ZEP_API_KEY = google_secret_manager_secret.zep_api_key.secret_id
-    MOCHI_API_KEY = google_secret_manager_secret.mochi_api_key.secret_id
-    DB_URL = google_secret_manager_secret.db_url.secret_id
-  }
-}
-
-# Update notification processor function
 module "notification_processor" {
   source = "./modules/cloud_function"
   
@@ -195,15 +177,13 @@ module "notification_processor" {
   }
 }
 
-# Cloud Workflow
 resource "google_workflows_workflow" "video_to_cards" {
   name            = "video-to-cards-workflow"
   region          = var.region
   source_contents = templatefile("${path.module}/workflow.yaml", {
     job_manager_url              = module.job_manager.function_url
     youtube_processor_url        = module.youtube_processor.function_url
-    transcription_processor_url  = module.transcription_processor.function_url
-    cards_processor_url          = module.cards_processor.function_url
+    transcription_translation_cards_processor_url  = module.transcription_translation_cards_processor.function_url
     notification_processor_url   = module.notification_processor.function_url
   })
   
@@ -232,14 +212,9 @@ output "youtube_processor_url" {
   value       = module.youtube_processor.function_url
 }
 
-output "transcription_processor_url" {
-  description = "URL of the transcription processor function"
-  value       = module.transcription_processor.function_url
-}
-
-output "cards_processor_url" {
-  description = "URL of the cards processor function"
-  value       = module.cards_processor.function_url
+output "transcription_translation_cards_processor_url" {
+  description = "URL of the transcription translation cards processor function"
+  value       = module.transcription_translation_cards_processor.function_url
 }
 
 output "notification_processor_url" {

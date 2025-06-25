@@ -25,6 +25,7 @@ sqlacodegen <DB_URL>
 - change field `audio_url` in db to `audio_path`
 - store thumbnails in db
 - Batch API calls to Mochi
+- Add an eval layer to filter out block cards that are too easy
 - Support non-Japanese languages (`from_language`)
 - Translate atoms (currently relying on Mochi here)
 - Evaluate transcription confidence level

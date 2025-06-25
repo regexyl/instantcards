@@ -54,3 +54,29 @@ variable "db_url" {
   type        = string
   sensitive   = true
 }
+
+variable "mochi_api_key" {
+  description = "The Mochi API key"
+  type        = string
+  sensitive   = true
+}
+
+variable "mochi_block_template_id" {
+  description = "The Mochi block template ID"
+  type        = string
+}
+
+variable "mochi_atom_template_id" {
+  description = "The Mochi atom template ID"
+  type        = string
+}
+
+variable "mochi_atom_deck_id" {
+  description = "The Mochi atom deck ID"
+  type        = string
+}
+
+variable "mochi_block_deck_id" {
+  description = "The Mochi block deck ID"
+  type        = string
+}
