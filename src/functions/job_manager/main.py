@@ -81,6 +81,24 @@ def get_job_status(job_id: str) -> tuple[Dict[str, Any], int]:
         return {"error": str(e)}, 500
 
 
+def update_job_status(job_id: str, status: str):
+    logger.info("updating_job_status", job_id=job_id)
+
+    session = get_session()
+
+    with session.begin():
+        result = session.query(Job).filter(Job.workflow_id == job_id).update(
+            {"status": status}
+        )
+
+        if result == 0:
+            logger.info("job_not_found_for_update", job_id=job_id)
+            return False
+
+        logger.info("job_status_updated", job_id=job_id, status=status)
+        return True
+
+
 @functions_framework.http
 def manage_job(request) -> tuple[Dict[str, Any], int]:
     """
@@ -106,9 +124,12 @@ def manage_job(request) -> tuple[Dict[str, Any], int]:
         return {"error": "No request data provided"}, 400
 
     action = request_json.get("action")
+    job_id = request_json.get("job_id")
+
+    if not job_id:
+        return {"error": "job_id is required"}, 500
 
     if action == "create":
-        job_id = request_json.get("job_id")
         video_url = request_json.get("video_url")
 
         if not all([job_id, video_url]):
@@ -122,12 +143,15 @@ def manage_job(request) -> tuple[Dict[str, Any], int]:
             return {"error": str(e), "status": "error"}, 500
 
     elif action == "status":
-        job_id = request_json.get("job_id")
-
-        if not job_id:
-            return {"error": "job_id is required for status check"}, 400
-
         return get_job_status(job_id)
+
+    elif action == "update":
+        status = request_json.get("status")
+        if not status:
+            return {"error": "status is required"}, 400
+
+        update_job_status(job_id=job_id, status=status)
+        return {"status": "success"}, 200
 
     else:
         return {"error": "Invalid action. Use 'create' or 'status'"}, 400

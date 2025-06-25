@@ -26,6 +26,7 @@ sqlacodegen <DB_URL>
 - store thumbnails in db
 - Batch API calls to Mochi
 - Add an eval layer to filter out block cards that are too easy
+- Input validation on the workflow.yaml level
 - Support non-Japanese languages (`from_language`)
 - Translate atoms (currently relying on Mochi here)
 - Evaluate transcription confidence level

@@ -67,10 +67,27 @@ main:
               email: $${email}
               job_id: $${job_id}
               stats:
-                cards_created: $${cards_result.body.cards_created}
-                new_words: $${transcription_result.body.new_words}
+                atom_cards_created_count: $${transcription_result.body.atom_cards_created_count}
+                block_cards_created_count: $${transcription_result.body.block_cards_created_count}
                 processing_time: $${sys.now() - start_time}
           result: notification_result
+        retry:
+          max_retries: 3
+          backoff:
+            initial_delay: 1
+            max_delay: 60
+            multiplier: 2
+
+    - end_job:
+        try:
+          call: http.post
+          args:
+            url: ${job_manager_url}
+            body:
+              action: 'update'
+              job_id: $${job_id}
+              status: 'success'
+          result: job_result
         retry:
           max_retries: 3
           backoff:
@@ -83,6 +100,29 @@ main:
           job_id: $${job_id}
           status: 'completed'
           stats:
-            cards_created: $${cards_result.body.cards_created}
-            new_words: $${transcription_result.body.new_words}
+            atom_cards_created: $${transcription_result.body.atom_cards_created_count}
+            block_cards_created: $${transcription_result.body.block_cards_created_count}
             processing_time: $${sys.now() - start_time}
+  except:
+    as: error
+    steps:
+      - handle_workflow_failure:
+          call: handle_step_failure
+          args:
+            job_id: $${job_id}
+            error: $${error}
+
+handle_step_failure:
+  params: [job_id, error]
+  steps:
+    - update_job_status:
+        call: http.post
+        args:
+          url: ${job_manager_url}
+          body:
+            action: 'update'
+            job_id: $${job_id}
+            status: 'failure'
+            error: $${error.message}
+    - raise_error:
+        raise: $${error}

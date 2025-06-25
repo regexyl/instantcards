@@ -141,9 +141,12 @@ def create_single_card(
         raise
 
 
-def create_atom_cards(translation: Translation) -> None:
+def create_atom_cards(translation: Translation) -> Dict[str, Any]:
     """
     Create cards for each atom in the translation using efficient batching and parallel processing.
+
+    Returns:
+        Dictionary with creation statistics including new and existing card counts
     """
     unique_values = set()
     for atom in translation.atoms:
@@ -163,6 +166,7 @@ def create_atom_cards(translation: Translation) -> None:
         value for value in unique_values if value not in existing_card_ids]
 
     new_card_ids = {}
+    creation_errors = []
 
     if values_to_create:
         logger.info(f"Creating {len(values_to_create)} new cards in parallel")
@@ -183,9 +187,17 @@ def create_atom_cards(translation: Translation) -> None:
                 except Exception as e:
                     logger.error(
                         f"Failed to create card for value '{value}': {e}")
+                    creation_errors.append({"value": value, "error": str(e)})
                     continue
 
     all_card_ids = {**existing_card_ids, **new_card_ids}
 
     for atom in translation.atoms:
         atom.set_card_id(all_card_ids[atom.value])
+
+    return {
+        "atom_cards_created_count": len(new_card_ids),
+        "atom_cards_existing_count": len(existing_card_ids),
+        "atom_cards_total_count": len(all_card_ids),
+        "atom_cards_creation_errors": creation_errors,
+    }

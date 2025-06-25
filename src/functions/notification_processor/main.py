@@ -1,20 +1,15 @@
-from database.sqlalchemy_client import update_job_status
 import os
-import json
-from typing import Dict, Any, Optional
+import smtplib
+from typing import Dict, Any
 import functions_framework
-import requests
 import structlog
-from datetime import datetime
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
-# Configure structured logging
+from db.main import get_session
+from db.sqlacodegen import Job
+
 logger = structlog.get_logger()
-
-# Initialize clients
-POSTMARK_API_TOKEN = os.environ["POSTMARK_API_TOKEN"]
-POSTMARK_API_ENDPOINT = "https://api.postmarkapp.com/email"
 
 
 def format_duration(seconds: float) -> str:
@@ -35,7 +30,7 @@ def format_duration(seconds: float) -> str:
 
 def send_completion_email(email: str, stats: Dict[str, Any], job_id: str) -> None:
     """
-    Send completion notification email using Postmark.
+    Send completion notification email using SMTP.
 
     Args:
         email: Recipient email address
@@ -44,22 +39,25 @@ def send_completion_email(email: str, stats: Dict[str, Any], job_id: str) -> Non
     """
     logger.info("sending_email", email=email, job_id=job_id)
 
-    # Update job status to completed
-    try:
-        update_job_status(job_id, "completed", stats)
-    except Exception as e:
-        logger.warning("failed_to_update_job_status",
-                       job_id=job_id, error=str(e))
-
-    # Format the processing time
     processing_time = format_duration(stats.get("processing_time", 0))
+    sender_email = os.environ.get("SENDER_EMAIL")
+    sender_password = os.environ.get("SENDER_PASSWORD")
 
-    # Create email content
+    if not sender_email:
+        raise ValueError("SENDER_EMAIL environment variable is required")
+    if not sender_password:
+        raise ValueError("SENDER_PASSWORD environment variable is required")
+
+    session = get_session()
+    with session.begin():
+        job = session.query(Job).filter(Job.id == job_id).first()
+        if not job:
+            raise ValueError(f"Job with id {job_id} not found")
+
     html_content = f"""
-    <h2>Video Processing Complete</h2>
-    <p>Your YouTube video has been processed and flashcards have been created!</p>
+    <h2>instantcards: {job.name}</h2>
+    <p>Some stats:</p>
     
-    <h3>Processing Statistics:</h3>
     <ul>
         <li><strong>Flashcards Created:</strong> {stats.get('cards_created', 0)}</li>
         <li><strong>New Vocabulary Words:</strong> {stats.get('new_words', 0)}</li>
@@ -71,36 +69,30 @@ def send_completion_email(email: str, stats: Dict[str, Any], job_id: str) -> Non
     <p>Job ID: {job_id}</p>
     """
 
-    # Prepare Postmark API request
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "X-Postmark-Server-Token": POSTMARK_API_TOKEN,
-    }
+    message = MIMEMultipart('alternative')
+    message['From'] = sender_email
+    message['To'] = email
+    message['Subject'] = "Your Flashcards are Ready! 🎉"
 
-    payload = {
-        "From": os.environ.get("SENDER_EMAIL", "noreply@instantcards.app"),
-        "To": email,
-        "Subject": "Your Flashcards are Ready! 🎉",
-        "HtmlBody": html_content,
-        "MessageStream": "outbound",  # Default transactional stream
-        "TrackOpens": True,
-        "Metadata": {"job_id": job_id},
-    }
+    html_part = MIMEText(html_content, 'html')
+    message.attach(html_part)
 
     try:
-        response = requests.post(
-            POSTMARK_API_ENDPOINT, headers=headers, json=payload)
-        response.raise_for_status()
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+
+        text = message.as_string()
+        server.sendmail(sender_email, email, text)
+        server.quit()
 
         logger.info(
             "email_sent",
-            message_id=response.json().get("MessageID"),
             email=email,
             job_id=job_id,
         )
 
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         logger.exception("email_send_failed", error=str(e),
                          email=email, job_id=job_id)
         raise

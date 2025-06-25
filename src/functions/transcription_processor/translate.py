@@ -1,4 +1,3 @@
-import os
 from typing import Dict, Any
 from google.cloud import translate_v2
 from openai import OpenAI

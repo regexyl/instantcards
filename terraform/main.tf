@@ -93,9 +93,9 @@ resource "google_secret_manager_secret_version" "db_url" {
   secret_data = var.db_url
 }
 
-# Replace SendGrid API key secret with Postmark
-resource "google_secret_manager_secret" "postmark_api_token" {
-  secret_id = "postmark-api-token"
+# Replace Postmark API key secret with Gmail app password
+resource "google_secret_manager_secret" "gmail_app_password" {
+  secret_id = "gmail-app-password"
   replication {
     auto {}
   }
@@ -172,7 +172,7 @@ module "notification_processor" {
   }
   
   secret_environment_variables = {
-    POSTMARK_API_TOKEN = google_secret_manager_secret.postmark_api_token.secret_id
+    SENDER_PASSWORD = google_secret_manager_secret.gmail_app_password.secret_id
     DB_URL = google_secret_manager_secret.db_url.secret_id
   }
 }

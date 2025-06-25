@@ -46,6 +46,7 @@ def extract_atoms(translation: Translation, job_id: str) -> Dict[str, Any]:
     try:
         total_atoms = 0
         blocks_with_atoms = 0
+        unique_atoms = set()
 
         # Process each block individually
         for block_index, block in enumerate(translation.blocks):
@@ -55,16 +56,21 @@ def extract_atoms(translation: Translation, job_id: str) -> Dict[str, Any]:
                 translation.add_atoms_to_block(block_index, block_atoms)
                 total_atoms += len(block_atoms)
                 blocks_with_atoms += 1
+                for atom in block_atoms:
+                    unique_atoms.add(atom.value)
 
         result_data = {
             "atoms_extracted": total_atoms,
+            "unique_atoms_count": len(unique_atoms),
             "blocks_with_atoms": blocks_with_atoms,
-            "total_blocks_processed": len(translation.blocks)
+            "total_blocks_processed": len(translation.blocks),
+            "average_atoms_per_block": total_atoms / len(translation.blocks) if translation.blocks else 0
         }
 
         logger.info("atoms_extracted",
                     job_id=job_id,
                     atoms_count=total_atoms,
+                    unique_atoms=len(unique_atoms),
                     blocks_with_atoms=blocks_with_atoms)
 
         return result_data

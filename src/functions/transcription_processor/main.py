@@ -1,7 +1,6 @@
 import asyncio
 from typing import Dict, Any, Optional
 import functions_framework
-from openai import NotGiven, OpenAI
 import structlog
 
 from functions.transcription_processor.create_block_cards import create_block_cards
@@ -40,9 +39,9 @@ async def process_translation_parallel(translation: Translation, name: str, job_
         asyncio.to_thread(translate, translation, job_id)
     )
 
-    def extract_and_create_atom_cards(translation: Translation, job_id: str) -> None:
+    def extract_and_create_atom_cards(translation: Translation, job_id: str) -> Dict[str, Any]:
         extract_atoms(translation, job_id)
-        create_atom_cards(translation)
+        return create_atom_cards(translation)
 
     extract_and_create_atom_cards_task = asyncio.create_task(
         asyncio.to_thread(extract_and_create_atom_cards, translation, job_id)
@@ -54,23 +53,28 @@ async def process_translation_parallel(translation: Translation, name: str, job_
 
     create_block_cards(translation, name)
 
-    results = {}
     for result, name in [(store_result, "store_audio"),
                          (translate_result, "translate"),
                          (extract_and_create_atom_cards_result, "extract_and_create_atom_cards")]:
         if isinstance(result, Exception):
             logger.error(f"{name}_failed", job_id=job_id, error=str(result))
-            results[name] = {"error": str(result)}
-        else:
-            results[name] = result
 
-    results["translation_data"] = translation.to_dict()
+    results = {}
+    results["atom_cards_created_count"] = (
+        extract_and_create_atom_cards_result["atom_cards_created_count"]
+        if isinstance(extract_and_create_atom_cards_result, dict)
+        else 0
+    )
+    results["block_cards_created_count"] = translation.get_block_count()
 
     logger.info("parallel_processing_complete",
                 job_id=job_id,
                 store_success=not isinstance(store_result, Exception),
                 translate_success=not isinstance(translate_result, Exception),
-                extract_success=not isinstance(extract_and_create_atom_cards_result, Exception))
+                extract_success=not isinstance(
+                    extract_and_create_atom_cards_result, Exception),
+                atom_cards_created=results["atom_cards_created_count"],
+                block_cards_created=results["block_cards_created_count"])
 
     return results
 
