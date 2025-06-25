@@ -47,6 +47,7 @@ main:
           args:
             url: ${transcription_processor_url}
             body:
+              name: $${audio_result.body.name}
               audio_path: $${audio_result.body.audio_path}
               job_id: $${job_id}
           result: transcription_result

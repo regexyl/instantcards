@@ -22,6 +22,8 @@ sqlacodegen <DB_URL>
 - Send every error initially through email (for me)
 - Handle lexemes
 - Flag when unidic-lite is not able to handle certain words
+- change field `audio_url` in db to `audio_path`
+- store thumbnails in db
 - Batch API calls to Mochi
 - Support non-Japanese languages (`from_language`)
 - Translate atoms (currently relying on Mochi here)

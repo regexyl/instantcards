@@ -1,12 +1,15 @@
 import os
 import tempfile
 import yt_dlp
-from typing import Dict, Any, Union, Tuple
+from typing import Dict, Tuple
 import functions_framework
 from google.cloud import storage
 import structlog
 from flask import Request
 import random
+
+from db.main import get_session
+from db.sqlacodegen import Job
 
 logger = structlog.get_logger()
 storage_client = storage.Client()
@@ -20,7 +23,7 @@ def get_media_bucket() -> storage.Bucket:
     return storage_client.bucket(bucket_name)
 
 
-def download_audio(video_url: str, job_id: str) -> str:
+def download_audio(video_url: str, job_id: str) -> Tuple[str, str]:
     """
     Download audio from YouTube video with bot detection handling.
 
@@ -36,14 +39,12 @@ def download_audio(video_url: str, job_id: str) -> str:
     with tempfile.TemporaryDirectory() as temp_dir:
         output_template = os.path.join(temp_dir, f"{job_id}.%(ext)s")
 
-        # User agents to rotate through
         user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         ]
 
-        # Configure yt-dlp options with bot detection handling
         ydl_opts = {
             "format": "bestaudio/best",
             "postprocessors": [
@@ -55,14 +56,11 @@ def download_audio(video_url: str, job_id: str) -> str:
             ],
             "outtmpl": output_template,
             "quiet": True,
-            "no_warnings": True,
-            # Bot detection handling
             "user_agent": random.choice(user_agents),
             "extractor_retries": 3,
             "retries": 3,
             "fragment_retries": 3,
             "ignoreerrors": False,
-            # Additional headers to appear more human-like
             "http_headers": {
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-us,en;q=0.5",
@@ -76,6 +74,14 @@ def download_audio(video_url: str, job_id: str) -> str:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([video_url])
 
+                info = ydl.extract_info(video_url)
+                if not info:
+                    logger.error("video_info_not_found", video_url=video_url)
+                    raise Exception("Video info not found")
+
+                video_title = info.get('title', 'Unknown Title')
+                logger.info("video_title", video_title=video_title)
+
             output_file = f"{job_id}.wav"
             output_path = os.path.join(temp_dir, output_file)
 
@@ -83,7 +89,6 @@ def download_audio(video_url: str, job_id: str) -> str:
                 raise FileNotFoundError(
                     f"Audio file not found at {output_path}")
 
-            # Upload to Cloud Storage
             bucket = get_media_bucket()
             blob_name = f"audio/{job_id}/audio.wav"
             blob = bucket.blob(blob_name)
@@ -95,7 +100,16 @@ def download_audio(video_url: str, job_id: str) -> str:
                 size_bytes=os.path.getsize(output_path),
             )
 
-            return blob_name
+            session = get_session()
+            with session.begin():
+                job = session.query(Job).filter(
+                    Job.workflow_id == job_id).first()
+                if not job:
+                    raise Exception("Job not found")
+                job.name = video_title
+                job.audio_url = blob_name
+
+            return blob_name, video_title
 
         except Exception as e:
             logger.error(
@@ -132,8 +146,8 @@ def process_video(request: Request) -> Tuple[Dict[str, str], int]:
         return {"error": "job_id is required"}, 400
 
     try:
-        audio_path = download_audio(video_url, job_id)
-        return {"status": "success", "audio_path": audio_path, "job_id": job_id}, 200
+        audio_path, name = download_audio(video_url, job_id)
+        return {"status": "success", "audio_path": audio_path, "name": name, "job_id": job_id}, 200
 
     except Exception as e:
         logger.exception(
